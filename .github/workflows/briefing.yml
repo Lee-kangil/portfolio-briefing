@@ -1,0 +1,67 @@
+name: portfolio-morning-briefing
+
+on:
+  schedule:
+    # UTC 기준. 22:00 UTC = 한국시간(KST) 오전 7시. (장 개장 전, 전 거래일 종가 기준)
+    - cron: "0 22 * * *"
+  workflow_dispatch: {}   # 깃허브에서 수동 실행 버튼
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 파이썬 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: 브리핑 생성 (docs/index.html)
+        env:
+          BRIEFING_OUT: docs
+        run: python portfolio_full_briefing.py
+
+      - name: (선택) 텔레그램으로 파일 전송
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+            DATE=$(TZ=Asia/Seoul date +%Y.%m.%d)
+            curl -s -F chat_id="$TG_CHAT" \
+                 -F caption="📊 [$DATE] 포트폴리오 브리핑 (브라우저로 열어보세요)" \
+                 -F document=@docs/index.html \
+                 "https://api.telegram.org/bot$TG_TOKEN/sendDocument" > /dev/null \
+              && echo "텔레그램 전송 완료" || echo "텔레그램 전송 실패(무시)"
+          else
+            echo "텔레그램 시크릿 미설정 — 전송 건너뜀"
+          fi
+
+      - name: Pages 설정
+        uses: actions/configure-pages@v5
+
+      - name: 산출물 업로드
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - name: GitHub Pages 배포
+        id: deploy
+        uses: actions/deploy-pages@v4
