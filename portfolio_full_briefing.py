@@ -4,19 +4,15 @@
 =====================================================================
 보유 포트폴리오 + 동행학교 1·2·3군 그룹을 각각 별도 HTML 리포트로 생성합니다.
 시세는 네이버 금융 실시간 API에서 직접 받아옵니다. (pykrx 미사용 → KRX 로그인/차단 문제 없음)
-
 [로컬 실행 - Windows]
   pip install requests
   python portfolio_full_briefing.py
   -> Downloads 폴더에 그룹별 portfolio_<그룹>_YYYYMMDD.html / .csv 생성
-
 [클라우드 - GitHub Actions]
   BRIEFING_OUT=docs 지정 시 그 폴더에 g1.html.. + index.html(목차) 생성
-
 * 인터넷 되는 환경에서 실행. (Cowork 샌드박스는 외부망 차단)
 종목은 (이름, 코드, 시장) 으로 지정. 네이버가 돌려주는 종목명과 비교해 코드 오류 시 ⚠ 표시.
 """
-
 import os
 import re
 import csv
@@ -29,24 +25,18 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from email.utils import parsedate_to_datetime
 import xml.etree.ElementTree as ET
-
-
 def _ensure(pkg, import_name=None):
     try:
         __import__(import_name or pkg)
     except ImportError:
         print(f"[설치] {pkg} ...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "-q"])
-
-
 _ensure("requests")
 import requests
-
 KST = timezone(timedelta(hours=9))
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 briefing-bot"
 C_UP, C_DOWN, C_FLAT = "#e53e3e", "#2b6cb0", "#718096"
 NEWS_PER_STOCK = 2
-
 # ---------------------------------------------------------------------------
 # 그룹 정의 — (이름, 코드, 시장). 종목 추가/삭제는 줄 단위로.
 # ---------------------------------------------------------------------------
@@ -88,8 +78,6 @@ GROUPS = {
         ("보령", "003850", "KOSPI"), ("동화기업", "025900", "KOSDAQ"),
     ],
 }
-
-
 # ---------------------------------------------------------------------------
 # 시세: 네이버 금융 실시간 API
 # ---------------------------------------------------------------------------
@@ -108,25 +96,17 @@ def _find_quote(obj):
             if r:
                 return r
     return None
-
-
 def _num(x):
     try:
         return float(str(x).replace(",", ""))
     except Exception:
         return None
-
-
 _H = {"User-Agent": UA, "Referer": "https://finance.naver.com/",
       "Accept": "application/json"}
-
-
 def _mk(close, diff, pct, name):
     return {"close": int(round(close)), "diff": int(round(diff)),
             "pct": round(pct, 2), "name": (name or "").strip(),
             "date": datetime.now(KST).strftime("%Y-%m-%d")}
-
-
 def _from_mstock(code):
     # 모바일 네이버 증권 API (가장 안정적)
     r = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic",
@@ -141,8 +121,6 @@ def _from_mstock(code):
     diff = abs(_num(j.get("compareToPreviousClosePrice")) or 0)
     pct = abs(_num(j.get("fluctuationsRatio")) or 0)
     return _mk(close, sign * diff, sign * pct, j.get("stockName"))
-
-
 def _from_polling(code):
     r = requests.get(
         f"https://polling.finance.naver.com/api/realtime/domestic/stock/{code}",
@@ -158,8 +136,6 @@ def _from_polling(code):
     sign = 1 if rf in ("1", "2") else (-1 if rf in ("4", "5") else 0)
     return _mk(close, sign * abs(_num(d.get("cv")) or 0),
                sign * abs(_num(d.get("cr")) or 0), d.get("nm"))
-
-
 def fetch_price(code):
     """여러 네이버 엔드포인트를 순서대로 시도. 첫 성공값 반환."""
     errs = []
@@ -172,8 +148,6 @@ def fetch_price(code):
         except Exception as e:
             errs.append(f"{fn.__name__}:{type(e).__name__}:{str(e)[:60]}")
     return None, " | ".join(errs)
-
-
 # ---------------------------------------------------------------------------
 # 뉴스: Google News RSS
 # ---------------------------------------------------------------------------
@@ -206,16 +180,10 @@ def fetch_news(name, n=NEWS_PER_STOCK):
             dt = ""
         items.append({"title": title, "link": link, "source": source, "date": dt})
     return items or [{"title": "(최근 뉴스 없음)", "link": "", "source": "", "date": ""}]
-
-
 def _norm(s):
     return re.sub(r"\s+", "", s or "")
-
-
 def _slug(i):
     return f"g{i+1}"
-
-
 def main():
     now = datetime.now(KST)
     out_dir = os.environ.get("BRIEFING_OUT") or os.path.join(os.path.expanduser("~"), "Downloads")
@@ -223,7 +191,6 @@ def main():
     cloud = bool(os.environ.get("BRIEFING_OUT"))
     stamp = now.strftime("%Y%m%d")
     index_links = []
-
     for gi, (gtitle, members) in enumerate(GROUPS.items()):
         print("=" * 70)
         print(f" [{gtitle}]  종목 {len(members)}개")
@@ -246,7 +213,6 @@ def main():
                 print(f"  {name:<14} (시세 실패: {err})")
             data.append({"name": name, "code": code, "market": mkt,
                          "price": price, "news": news, "warn": warn})
-
         valid = [d for d in data if d["price"]]
         up = sum(1 for d in valid if d["price"]["pct"] > 0)
         down = sum(1 for d in valid if d["price"]["pct"] < 0)
@@ -254,7 +220,6 @@ def main():
         top = max(valid, key=lambda d: abs(d["price"]["pct"])) if valid else None
         if warns:
             print("  [확인필요]", ", ".join(warns))
-
         safe = re.sub(r"[^0-9A-Za-z가-힣]+", "_", gtitle).strip("_")
         with open(os.path.join(out_dir, f"portfolio_{safe}_{stamp}.csv"),
                   "w", newline="", encoding="utf-8-sig") as f:
@@ -265,7 +230,6 @@ def main():
                 w.writerow([d["name"], d["code"], d["market"],
                             p["close"] if p else "", p["pct"] if p else "",
                             p["date"] if p else "", d["warn"]])
-
         dated = os.path.join(out_dir, f"portfolio_{safe}_{stamp}.html")
         _write_html(data, (up, down, flat, top), now, gtitle, dated)
         if cloud:
@@ -273,12 +237,9 @@ def main():
             _write_html(data, (up, down, flat, top), now, gtitle,
                         os.path.join(out_dir, fixed))
             index_links.append((gtitle, fixed, up, down, flat, top))
-
     if cloud:
         _write_index(index_links, now, os.path.join(out_dir, "index.html"))
     print("\n완료. 저장 위치:", out_dir)
-
-
 # ---------------------------------------------------------------------------
 # HTML
 # ---------------------------------------------------------------------------
@@ -290,8 +251,6 @@ def _pct_style(pct):
     if pct < 0:
         return f"color:{C_DOWN};font-weight:700", f"▼ {pct:+.2f}%"
     return f"color:{C_FLAT};font-weight:700", f"{pct:+.2f}%"
-
-
 CSS = """
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:#f4f6f9;color:#1a202c;padding:0 0 50px;line-height:1.55}
@@ -323,8 +282,85 @@ tr:last-child td{border-bottom:none}
 .idx a:hover{background:#eef2f7}
 footer{text-align:center;font-size:11.5px;color:#94a3b8;margin-top:34px}
 """
-
-
+# ---------------------------------------------------------------------------
+# GitHub Action 수동 실행 버튼 (목차 페이지 상단에 삽입됨)
+#  - 토큰은 공개 소스에 안 들어가고, 사용자 브라우저(localStorage)에만 저장됨
+#  - 저장소/브랜치가 바뀌면 아래 REPO / BRANCH 만 수정
+# ---------------------------------------------------------------------------
+RUN_BUTTON_HTML = """
+<div id="gh-run-box" style="margin:18px 0;padding:14px 16px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.06);">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <button id="gh-run-btn" style="padding:9px 16px;border:0;border-radius:8px;background:#2563eb;color:#fff;font-size:14px;font-weight:700;cursor:pointer;">▶ 지금 브리핑 새로 실행</button>
+    <span id="gh-run-status" style="font-size:13px;color:#5a6675;"></span>
+    <button id="gh-token-btn" title="토큰 설정" style="margin-left:auto;padding:6px 10px;border:1px solid #cbd5e0;border-radius:8px;background:#fff;font-size:12px;color:#5a6675;cursor:pointer;">⚙ 토큰</button>
+  </div>
+  <div id="gh-token-row" style="display:none;margin-top:10px;">
+    <input id="gh-token-input" type="password" placeholder="GitHub PAT 붙여넣기 (한 번만)" autocomplete="off" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #cbd5e0;border-radius:8px;font-size:13px;">
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button id="gh-token-save" style="padding:7px 12px;border:0;border-radius:8px;background:#16a34a;color:#fff;font-size:13px;cursor:pointer;">저장</button>
+      <button id="gh-token-clear" style="padding:7px 12px;border:1px solid #cbd5e0;border-radius:8px;background:#fff;font-size:13px;color:#5a6675;cursor:pointer;">삭제</button>
+      <span style="font-size:11px;color:#94a3b8;align-self:center;">이 브라우저에만 저장됨</span>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var REPO = "Lee-kangil/portfolio-briefing";
+  var WORKFLOW = "briefing.yml";
+  var BRANCH = "main";
+  var KEY = "gh_pat_portfolio";
+  var $ = function (id) { return document.getElementById(id); };
+  var statusEl = $("gh-run-status");
+  function setStatus(t, c) { statusEl.textContent = t; statusEl.style.color = c || "#5a6675"; }
+  $("gh-token-btn").onclick = function () {
+    var row = $("gh-token-row");
+    row.style.display = (row.style.display === "none") ? "block" : "none";
+    if (localStorage.getItem(KEY)) $("gh-token-input").placeholder = "토큰 저장됨 — 새로 바꾸려면 붙여넣기";
+  };
+  $("gh-token-save").onclick = function () {
+    var v = $("gh-token-input").value.trim();
+    if (!v) { setStatus("토큰이 비어 있습니다.", "#dc2626"); return; }
+    localStorage.setItem(KEY, v);
+    $("gh-token-input").value = "";
+    $("gh-token-row").style.display = "none";
+    setStatus("토큰 저장 완료 ✓", "#16a34a");
+  };
+  $("gh-token-clear").onclick = function () {
+    localStorage.removeItem(KEY);
+    setStatus("토큰 삭제됨", "#5a6675");
+  };
+  $("gh-run-btn").onclick = async function () {
+    var token = localStorage.getItem(KEY);
+    if (!token) { setStatus("먼저 ⚙토큰을 등록하세요.", "#dc2626"); $("gh-token-row").style.display = "block"; return; }
+    this.disabled = true;
+    setStatus("실행 요청 중…", "#2563eb");
+    try {
+      var res = await fetch(
+        "https://api.github.com/repos/" + REPO + "/actions/workflows/" + WORKFLOW + "/dispatches",
+        { method: "POST",
+          headers: { "Accept": "application/vnd.github+json", "Authorization": "Bearer " + token, "X-GitHub-Api-Version": "2022-11-28" },
+          body: JSON.stringify({ ref: BRANCH }) }
+      );
+      if (res.status === 204) {
+        setStatus("실행 시작됨 ✓ 1~2분 뒤 새로고침하세요.", "#16a34a");
+      } else if (res.status === 401 || res.status === 403) {
+        setStatus("토큰 권한 오류(" + res.status + "). Actions 쓰기 권한 확인.", "#dc2626");
+      } else if (res.status === 404) {
+        setStatus("저장소/워크플로/브랜치 이름 확인 필요(404).", "#dc2626");
+      } else {
+        var msg = "";
+        try { msg = (await res.json()).message || ""; } catch (e) {}
+        setStatus("실패(" + res.status + ") " + msg, "#dc2626");
+      }
+    } catch (e) {
+      setStatus("네트워크 오류: " + e.message, "#dc2626");
+    } finally {
+      this.disabled = false;
+    }
+  };
+})();
+</script>
+"""
 def _write_html(data, summary, now, group_title, path):
     up, down, flat, top = summary
     rows = []
@@ -390,8 +426,6 @@ def _write_html(data, summary, now, group_title, path):
     )
     with open(path, "w", encoding="utf-8") as f:
         f.write(doc)
-
-
 def _write_index(links, now, path):
     gen = now.strftime("%Y-%m-%d %H:%M KST")
     items = ""
@@ -407,12 +441,10 @@ def _write_index(links, now, path):
            "<title>포트폴리오 브리핑 목차 · " + now.strftime("%Y.%m.%d") + "</title><style>"
            + CSS + "</style></head><body><header><div class='wrap'>"
            "<h1>📊 포트폴리오 브리핑 — 그룹별</h1><div class='meta'>생성 " + gen
-           + "</div></div></header><div class='wrap idx'>" + items
+           + "</div></div></header><div class='wrap idx'>" + RUN_BUTTON_HTML + items
            + "<footer>시세: 네이버 금융 · 뉴스: Google News · 투자 권유가 아닙니다.</footer>"
            "</div></body></html>")
     with open(path, "w", encoding="utf-8") as f:
         f.write(doc)
-
-
 if __name__ == "__main__":
     main()
