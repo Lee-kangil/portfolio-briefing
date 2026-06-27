@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-포트폴리오 / 워치리스트 그룹별 풀 브리핑 (네이버 금융 시세 + Google 뉴스)
+포트폴리오 / 워치리스트 그룹별 풀 브리핑 (네이버 금융 + 야후 파이낸스 시세 + Google 뉴스)
 =====================================================================
 보유 포트폴리오 + 동행학교 1·2·3군 그룹을 각각 별도 HTML 리포트로 생성합니다.
-시세는 네이버 금융 실시간 API에서 직접 받아옵니다. (pykrx 미사용 → KRX 로그인/차단 문제 없음)
+국내 종목 시세는 네이버 금융 실시간 API, 미국 종목 시세는 야후 파이낸스 API에서 받아옵니다.
+(pykrx 미사용 → KRX 로그인/차단 문제 없음)
 [로컬 실행 - Windows]
   pip install requests
   python portfolio_full_briefing.py
@@ -11,7 +12,8 @@
 [클라우드 - GitHub Actions]
   BRIEFING_OUT=docs 지정 시 그 폴더에 g1.html.. + index.html(목차) 생성
 * 인터넷 되는 환경에서 실행. (Cowork 샌드박스는 외부망 차단)
-종목은 (이름, 코드, 시장) 으로 지정. 네이버가 돌려주는 종목명과 비교해 코드 오류 시 ⚠ 표시.
+종목은 (이름, 코드, 시장) 으로 지정. 시장이 KOSPI/KOSDAQ 면 네이버, US/NASDAQ/NYSE/AMEX 면 야후.
+네이버가 돌려주는 종목명과 비교해 코드 오류 시 ⚠ 표시 (미국 종목은 교차검증 생략).
 """
 import os
 import re
@@ -37,15 +39,19 @@ KST = timezone(timedelta(hours=9))
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 briefing-bot"
 C_UP, C_DOWN, C_FLAT = "#e53e3e", "#2b6cb0", "#718096"
 NEWS_PER_STOCK = 2
+# 미국 시장(야후 파이낸스 라우팅). 국내는 KOSPI/KOSDAQ.
+US_MARKETS = {"US", "NASDAQ", "NYSE", "AMEX"}
+def _is_us(market):
+    return str(market).upper() in US_MARKETS
 # ---------------------------------------------------------------------------
-# 그룹 정의 — (이름, 코드, 시장). 종목 추가/삭제는 줄 단위로.
+# 그룹 정의 — (이름, 코드/티커, 시장). 종목 추가/삭제는 줄 단위로.
+#   국내: 시장 = KOSPI / KOSDAQ, 코드 = 6자리(특수 티커 포함)
+#   미국: 시장 = US / NASDAQ / NYSE / AMEX, 코드 = 영문 티커
 # ---------------------------------------------------------------------------
 GROUPS = {
     "보유 포트폴리오": [
-        ("LX인터내셔널", "001120", "KOSPI"), ("파미셀", "005690", "KOSPI"),
-        ("아이에스동서", "010780", "KOSPI"), ("성광벤드", "014620", "KOSDAQ"),
-        ("유니드", "014830", "KOSPI"), ("롯데에너지머티리얼즈", "020150", "KOSPI"),
-        ("LX세미콘", "108320", "KOSDAQ"), ("LX홀딩스", "383800", "KOSPI"),
+        ("삼성전자", "005930", "KOSPI"), ("SK하이닉스", "000660", "KOSPI"),
+        ("DRAM (Roundhill Memory ETF)", "DRAM", "NASDAQ"),
     ],
     "1군 · 글로벌 브랜드": [
         ("삼성물산", "028260", "KOSPI"), ("LG", "003550", "KOSPI"),
@@ -79,7 +85,7 @@ GROUPS = {
     ],
 }
 # ---------------------------------------------------------------------------
-# 시세: 네이버 금융 실시간 API
+# 시세 공통
 # ---------------------------------------------------------------------------
 def _find_quote(obj):
     """JSON 안에서 'nv'(현재가)와 'cv'(전일대비)를 가진 dict 를 재귀 탐색."""
@@ -103,10 +109,20 @@ def _num(x):
         return None
 _H = {"User-Agent": UA, "Referer": "https://finance.naver.com/",
       "Accept": "application/json"}
-def _mk(close, diff, pct, name):
-    return {"close": int(round(close)), "diff": int(round(diff)),
-            "pct": round(pct, 2), "name": (name or "").strip(),
+def _mk(close, diff, pct, name, cur="KRW"):
+    """시세 dict 생성. KRW 는 정수 원, USD 는 소수 2자리 유지."""
+    if cur == "USD":
+        close = round(close, 2)
+        diff = round(diff, 2)
+    else:
+        close = int(round(close))
+        diff = int(round(diff))
+    return {"close": close, "diff": diff,
+            "pct": round(pct, 2), "name": (name or "").strip(), "cur": cur,
             "date": datetime.now(KST).strftime("%Y-%m-%d")}
+# ---------------------------------------------------------------------------
+# 시세: 네이버 금융 실시간 API (국내)
+# ---------------------------------------------------------------------------
 def _from_mstock(code):
     # 모바일 네이버 증권 API (가장 안정적)
     r = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic",
@@ -136,8 +152,44 @@ def _from_polling(code):
     sign = 1 if rf in ("1", "2") else (-1 if rf in ("4", "5") else 0)
     return _mk(close, sign * abs(_num(d.get("cv")) or 0),
                sign * abs(_num(d.get("cr")) or 0), d.get("nm"))
-def fetch_price(code):
-    """여러 네이버 엔드포인트를 순서대로 시도. 첫 성공값 반환."""
+# ---------------------------------------------------------------------------
+# 시세: 야후 파이낸스 chart API (미국)
+# ---------------------------------------------------------------------------
+def _from_yahoo(ticker):
+    """야후 파이낸스 v8 chart API. query1 실패 시 query2 폴백. USD 시세 반환."""
+    last = None
+    for host in ("query1", "query2"):
+        try:
+            url = (f"https://{host}.finance.yahoo.com/v8/finance/chart/"
+                   f"{ticker}?range=5d&interval=1d")
+            r = requests.get(url, timeout=10,
+                             headers={"User-Agent": UA, "Accept": "application/json"})
+            r.raise_for_status()
+            j = r.json()
+            res = (((j.get("chart") or {}).get("result") or [None])[0]) or {}
+            meta = res.get("meta") or {}
+            close = _num(meta.get("regularMarketPrice"))
+            prev = _num(meta.get("chartPreviousClose") or meta.get("previousClose"))
+            if close is None or prev is None:
+                last = "빈응답"
+                continue
+            diff = close - prev
+            pct = (diff / prev * 100) if prev else 0.0
+            name = meta.get("shortName") or meta.get("symbol") or ticker
+            return _mk(close, diff, pct, name, cur="USD")
+        except Exception as e:
+            last = f"{type(e).__name__}:{str(e)[:50]}"
+    raise RuntimeError(last or "yahoo 실패")
+def fetch_price(code, market="KOSPI"):
+    """시장에 따라 야후(미국) 또는 네이버(국내) 시세를 시도. (시세 dict, 에러) 반환."""
+    if _is_us(market):
+        try:
+            res = _from_yahoo(code)
+            if res:
+                return res, None
+            return None, "yahoo:빈응답"
+        except Exception as e:
+            return None, f"yahoo:{type(e).__name__}:{str(e)[:60]}"
     errs = []
     for fn in (_from_mstock, _from_polling):
         try:
@@ -149,11 +201,16 @@ def fetch_price(code):
             errs.append(f"{fn.__name__}:{type(e).__name__}:{str(e)[:60]}")
     return None, " | ".join(errs)
 # ---------------------------------------------------------------------------
-# 뉴스: Google News RSS
+# 뉴스: Google News RSS (국내=한국어, 미국=영어)
 # ---------------------------------------------------------------------------
-def fetch_news(name, n=NEWS_PER_STOCK):
-    q = quote(f"{name} 주가")
-    url = f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
+def fetch_news(name, market="KOSPI", n=NEWS_PER_STOCK):
+    clean = re.sub(r"\(.*?\)", "", name).strip()  # 괄호 설명 제거
+    if _is_us(market):
+        q = quote(f"{clean} ETF stock")
+        url = f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+    else:
+        q = quote(f"{clean} 주가")
+        url = f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
     try:
         r = requests.get(url, timeout=10, headers={"User-Agent": UA})
         r.raise_for_status()
@@ -197,20 +254,20 @@ def main():
         print("=" * 70)
         data, warns = [], []
         for name, code, mkt in members:
-            price, err = fetch_price(code)
-            news = fetch_news(name)
+            price, err = fetch_price(code, mkt)
+            news = fetch_news(name, mkt)
             time.sleep(0.3)
             warn = ""
             if price:
-                # 코드↔이름 교차검증 (우선주 'LG화학우' vs 'LG화학우' 등 공백제거 비교)
-                if price["name"] and _norm(price["name"]) != _norm(name):
+                # 코드↔이름 교차검증 (국내만; 미국은 종목명 표기 차이로 생략)
+                if (not _is_us(mkt)) and price["name"] and _norm(price["name"]) != _norm(name):
                     warn = f"코드확인필요(네이버명:{price['name']})"
                     warns.append(f"{name}->{price['name']}")
                 ar = "▲" if price["pct"] > 0 else ("▼" if price["pct"] < 0 else "-")
-                print(f"  {name:<14} {price['close']:>9,}원 {ar}{price['pct']:+.2f}%"
+                print(f"  {name:<20} {_fmt_close(price):>12} {ar}{price['pct']:+.2f}%"
                       + (f"  ⚠ {warn}" if warn else ""))
             else:
-                print(f"  {name:<14} (시세 실패: {err})")
+                print(f"  {name:<20} (시세 실패: {err})")
             data.append({"name": name, "code": code, "market": mkt,
                          "price": price, "news": news, "warn": warn})
         valid = [d for d in data if d["price"]]
@@ -224,12 +281,12 @@ def main():
         with open(os.path.join(out_dir, f"portfolio_{safe}_{stamp}.csv"),
                   "w", newline="", encoding="utf-8-sig") as f:
             w = csv.writer(f)
-            w.writerow(["종목명", "코드", "시장", "종가", "등락률(%)", "기준일", "비고"])
+            w.writerow(["종목명", "코드", "시장", "종가", "등락률(%)", "통화", "기준일", "비고"])
             for d in data:
                 p = d["price"]
                 w.writerow([d["name"], d["code"], d["market"],
                             p["close"] if p else "", p["pct"] if p else "",
-                            p["date"] if p else "", d["warn"]])
+                            p["cur"] if p else "", p["date"] if p else "", d["warn"]])
         dated = os.path.join(out_dir, f"portfolio_{safe}_{stamp}.html")
         _write_html(data, (up, down, flat, top), now, gtitle, dated)
         if cloud:
@@ -251,6 +308,20 @@ def _pct_style(pct):
     if pct < 0:
         return f"color:{C_DOWN};font-weight:700", f"▼ {pct:+.2f}%"
     return f"color:{C_FLAT};font-weight:700", f"{pct:+.2f}%"
+def _fmt_close(p):
+    """통화에 맞춘 현재가 문자열. USD=$X.XX, KRW=X,XXX원."""
+    if not p:
+        return "—"
+    if p.get("cur") == "USD":
+        return f"${p['close']:,.2f}"
+    return f"{p['close']:,}원"
+def _fmt_diff(p):
+    """통화에 맞춘 전일대비 문자열 (뒤 공백 포함)."""
+    if not p or p.get("diff") is None:
+        return ""
+    if p.get("cur") == "USD":
+        return f"{p['diff']:+,.2f} USD "
+    return f"{p['diff']:+,}원 "
 CSS = """
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:#f4f6f9;color:#1a202c;padding:0 0 50px;line-height:1.55}
@@ -367,7 +438,7 @@ def _write_html(data, summary, now, group_title, path):
     for d in data:
         p = d["price"]
         style, txt = _pct_style(p["pct"] if p else None)
-        close = f"{p['close']:,}원" if p else "—"
+        close = _fmt_close(p)
         rows.append(
             "<tr><td class='nm'>" + html.escape(d["name"]) + "</td>"
             "<td class='cd'>" + html.escape(str(d["code"])) + "</td><td>" + d["market"] + "</td>"
@@ -379,8 +450,8 @@ def _write_html(data, summary, now, group_title, path):
     for d in data:
         p = d["price"]
         style, txt = _pct_style(p["pct"] if p else None)
-        price_txt = f"{p['close']:,}원" if p else "시세 없음"
-        diff_txt = (f"{p['diff']:+,}원 " if (p and p["diff"] is not None) else "")
+        price_txt = _fmt_close(p) if p else "시세 없음"
+        diff_txt = _fmt_diff(p)
         warn_html = ("<div class='warn'>⚠ " + html.escape(d["warn"]) + "</div>") if d.get("warn") else ""
         news_html = ""
         for nw in d["news"]:
@@ -412,7 +483,7 @@ def _write_html(data, summary, now, group_title, path):
         "<title>" + gt + " · " + now.strftime("%Y.%m.%d") + "</title><style>" + CSS
         + "</style></head><body><header><div class='wrap'>"
         "<h1>📊 " + gt + "</h1><div class='meta'>생성 " + gen
-        + " · 시세: 네이버 금융 · 뉴스: Google News</div>"
+        + " · 시세: 네이버 금융/야후 파이낸스 · 뉴스: Google News</div>"
         "</div></header><div class='wrap'>"
         "<div class='bar'>상승 <b style='color:" + C_UP + "'>" + str(up)
         + "</b> · 하락 <b style='color:" + C_DOWN + "'>" + str(down)
@@ -421,7 +492,7 @@ def _write_html(data, summary, now, group_title, path):
         "<th>종목명</th><th>코드</th><th>시장</th><th>현재가</th><th>등락률</th><th>기준</th>"
         "</tr></thead><tbody>" + table + "</tbody></table>"
         "<h2>종목별 상세 (시세 + 뉴스)</h2><div class='cards'>" + cards_html + "</div>"
-        "<footer>시세: 네이버 금융 · 뉴스: Google News RSS · 정보 제공 목적이며 투자 권유가 아닙니다.</footer>"
+        "<footer>시세: 네이버 금융/야후 파이낸스 · 뉴스: Google News RSS · 정보 제공 목적이며 투자 권유가 아닙니다.</footer>"
         "</div></body></html>"
     )
     with open(path, "w", encoding="utf-8") as f:
@@ -442,7 +513,7 @@ def _write_index(links, now, path):
            + CSS + "</style></head><body><header><div class='wrap'>"
            "<h1>📊 포트폴리오 브리핑 — 그룹별</h1><div class='meta'>생성 " + gen
            + "</div></div></header><div class='wrap idx'>" + RUN_BUTTON_HTML + items
-           + "<footer>시세: 네이버 금융 · 뉴스: Google News · 투자 권유가 아닙니다.</footer>"
+           + "<footer>시세: 네이버 금융/야후 파이낸스 · 뉴스: Google News · 투자 권유가 아닙니다.</footer>"
            "</div></body></html>")
     with open(path, "w", encoding="utf-8") as f:
         f.write(doc)
