@@ -1,202 +1,132 @@
-# 포트폴리오 브리핑 자동화 — 프로젝트 인수인계 문서
+# 포트폴리오 브리핑 자동화 — 프로젝트 요약 (현재 상태)
 
-> 이 문서 하나만 Claude(Cowork)에게 붙여넣으면, 지금까지의 작업 맥락을 이해하고 바로 이어서 진행할 수 있습니다.
-> 최종 업데이트: 2026-06-17
+> 이 문서 하나만 Claude(Cowork)에 붙여넣으면 지금까지의 맥락을 이해하고 바로 이어서 진행할 수 있습니다.
+> 최종 업데이트: **2026-06-27**
 
 ---
 
 ## 0. 한 줄 요약
 
-한국 주식 보유 종목 + 관심 워치리스트(1·2·3군)의 **시세·등락률·뉴스**를 매일 아침 자동 수집해
-**그룹별 HTML 리포트**로 만들고, **GitHub Pages 웹페이지**로 발행하는 시스템. PC가 꺼져 있어도 클라우드에서 매일 자동 실행됨.
-**(2026-06-17 추가)** 목차 웹페이지에 **"지금 브리핑 새로 실행" 버튼**을 달아, 자동 실행 시각을 기다리지 않고 수동으로 즉시 갱신 가능.
+보유 종목 + 워치리스트(1·2·3군)의 **시세·등락률·뉴스**를 매일 아침 자동 수집해 **그룹별 HTML 리포트**로 만들고 **GitHub Pages**로 발행하는 시스템. PC가 꺼져 있어도 **GitHub Actions(클라우드)**에서 매일 자동 실행되며, 웹페이지의 **수동 실행 버튼**으로 즉시 갱신도 가능.
 
 ---
 
-## 1. 현재 운영 상태 (완성·가동 중)
-
-- **실행 방식**: GitHub Actions (클라우드, 무료) — 매일 아침 07:00 KST 자동 실행 + **웹페이지 버튼으로 수동 실행**
-- **결과 주소(북마크)**: `https://lee-kangil.github.io/portfolio-briefing/`
-  - 목차(index.html) → 보유/1군/2군/3군 4개 리포트로 이동
-  - 목차 상단에 수동 실행 버튼 표시
-  - 매일 같은 주소가 그날 데이터로 갱신됨 (이력 저장 안 함, 항상 최신 1개)
-- **GitHub 저장소**: `Lee-kangil/portfolio-briefing` (Public), 기본 브랜치 = `main`
-- **데이터 소스**: 시세 = 네이버 금융 API / 뉴스 = Google News RSS
-- **Cowork 스케줄 태스크 2개는 모두 OFF**
-  - `portfolio-morning-briefing` (구 오전 7시) → GitHub와 중복이라 비활성화
-  - `portfolio-change-inquiry` (구 밤 10시 카톡 문의) → 비활성화
-
----
-
-## 1.5 수동 실행 버튼 (2026-06-17 신규)
-
-### 무엇
-목차 페이지(index.html) 상단에 `▶ 지금 브리핑 새로 실행` 버튼 + `⚙ 토큰` 설정 UI.
-버튼을 누르면 GitHub API `workflow_dispatch`를 호출해 briefing.yml 워크플로를 즉시 실행함.
-
-### 어떻게 동작
-- 버튼이 호출하는 주소: `POST https://api.github.com/repos/Lee-kangil/portfolio-briefing/actions/workflows/briefing.yml/dispatches` (body: `{"ref":"main"}`)
-- GitHub REST API는 브라우저 CORS를 허용 → 정적 Pages 페이지에서 별도 서버 없이 직접 호출됨
-- 성공 시 HTTP 204 → "실행 시작됨 ✓" 표시, 1~2분 뒤 새로고침하면 갱신
-
-### 토큰(인증) — 보안 설계
-- 워크플로 수동 실행에는 권한 토큰(PAT)이 필요한데, **공개 Pages 소스에 토큰을 박으면 누구나 악용 가능** → 그래서 토큰을 소스에 넣지 않음
-- 대신 사용자가 `⚙ 토큰`에 1회 붙여넣으면 **그 PC 브라우저(localStorage)에만 저장**되고, 이후 버튼만 누르면 됨
-- 코드 내 `KEY = "gh_pat_portfolio"` 로 저장. 삭제하려면 ⚙ → 삭제
-
-### 토큰 발급 방법 (Fine-grained PAT)
-1. github.com → 우상단 프로필 → Settings → (좌측 맨 아래) **Developer settings** → Personal access tokens → **Fine-grained tokens**
-   - 빠른 주소: `https://github.com/settings/tokens?type=beta`
-2. **Generate new token** → Repository access = `Only select repositories` → `portfolio-briefing` 선택
-3. Repository permissions → **Actions: Read and write** (필수)
-   - 만약 실행 시 403 권한 오류가 나면 **Contents: Read and write** 도 추가
-   - fine-grained가 계속 막히면 classic token의 `repo` 스코프가 가장 확실한 대안
-4. 발급된 토큰은 **복사 버튼으로 복사 → 브리핑 페이지 ⚙토큰에 바로 붙여넣기.** 스크린샷/메모 등 다른 곳을 거치지 말 것 (노출 시 폐기 후 재발급)
-
-### 설정 위치 (저장소/브랜치 바뀔 때만 수정)
-스크립트 `RUN_BUTTON_HTML` 안의 JS 상단:
-```
-var REPO = "Lee-kangil/portfolio-briefing";
-var WORKFLOW = "briefing.yml";
-var BRANCH = "main";   // 기본 브랜치와 다르면 404
-```
-
-### 더 안전한 대안 (필요 시 전환)
-토큰이 본인 브라우저에만 있더라도 더 강하게 가두고 싶으면, Cloudflare Workers 등 **서버리스 프록시**에 토큰을 서버 측에 숨기고 버튼은 그 주소만 호출하게 바꿀 수 있음 (현재는 미적용).
-
----
-
-## 2. GitHub 저장소 구성 (파일 3개)
-
-```
-portfolio-briefing/
-├─ portfolio_full_briefing.py        # 메인 스크립트 (시세+뉴스 수집, HTML 생성, 수동실행 버튼 포함)
-├─ requirements.txt                  # 내용: requests
-└─ .github/workflows/briefing.yml    # 매일 자동 실행 + 수동 실행(workflow_dispatch) 워크플로
-```
-
-### briefing.yml 핵심
-- 트리거: `cron: "0 22 * * *"` (22:00 UTC = **07:00 KST**) + 수동 실행(`workflow_dispatch`) — 버튼이 이 트리거를 호출함
-- 동작: 파이썬 설치 → `pip install -r requirements.txt` → `BRIEFING_OUT=docs python portfolio_full_briefing.py` → docs 폴더를 GitHub Pages로 배포
-- (옵션) 저장소 Secrets에 `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` 넣으면 텔레그램 전송도 켜짐 — **현재 미설정**
-- Pages 설정: 저장소 Settings → Pages → Source = **GitHub Actions**
-
-### 실행 시각 바꾸기
-`briefing.yml`의 cron 한 줄 수정 (UTC 기준, KST = UTC+9):
-- 오전 8시 KST → `0 23 * * *`
-- 오전 6시 30분 KST → `30 21 * * *`
-
----
-
-## 3. 스크립트 구조 (portfolio_full_briefing.py)
-
-- 의존성: `requests` 만 (pykrx·pandas 사용 안 함)
-- `GROUPS` 딕셔너리: 그룹명 → `[(종목명, 코드, 시장), ...]` 리스트. **종목 추가/삭제는 이 부분만 수정**
-- `fetch_price(code)`: 네이버 모바일 API(`m.stock.naver.com/api/stock/{code}/basic`) 우선,
-  실패 시 polling API 폴백. 둘 다 실패하면 상세 에러 반환
-- **코드 교차검증**: 네이버가 돌려준 종목명 ≠ 내가 지정한 이름이면 리포트에 `⚠ 코드확인필요` 표시 → 코드 오타를 자동으로 잡아줌
-- `fetch_news(name)`: Google News RSS에서 "종목명 주가"로 최신 2건
-- `RUN_BUTTON_HTML`: 목차에 들어가는 수동 실행 버튼 블록 (1.5 참고)
-- `_write_index(...)`: 목차 생성 시 `RUN_BUTTON_HTML`을 상단에 삽입
-- 출력: 그룹별 `portfolio_<그룹>_YYYYMMDD.html` + `.csv`
-  - 환경변수 `BRIEFING_OUT=docs` 지정 시(클라우드) → `g1~g4.html` + 목차 `index.html` 생성
-  - 로컬 실행 시 → `~/Downloads`에 저장
-
-### 로컬에서 직접 돌리는 법 (Windows)
-```
-pip install requests
-cd %USERPROFILE%\Downloads
-python portfolio_full_briefing.py
-```
-
----
-
-## 4. 종목 그룹 (2026-06-16 기준)
-
-### 보유 포트폴리오 (8)
-LX인터내셔널(001120), 파미셀(005690), 아이에스동서(010780), 성광벤드(014620),
-유니드(014830), 롯데에너지머티리얼즈(020150), LX세미콘(108320), LX홀딩스(383800)
-> 참고: 이전에 보유했던 **태웅·한국전력·HMM은 매도하여 보유 그룹에서 제외**됨 (단, 워치리스트 1·2·3군에는 남아 있음)
-
-### 1군 · 글로벌 브랜드 (12)
-삼성물산(028260), LG(003550), LG전자우(066575), LG디스플레이(034220), LG화학우(051915),
-HD현대중공업(329180), 두산우(000155), 두산에너빌리티(034020), OCI홀딩스(010060),
-한화솔루션(009830), SKC(011790), 롯데에너지머티리얼즈(020150)
-
-### 2군 · 대기업 집단 계열사 (16)
-한국전력(015760), 한전기술(052690), 대한항공(003490), 한화3우B(00088K), SK이노베이션(096770),
-KCC(002380), DL(000210), DL이앤씨(375500), GS건설(006360), 삼성에피스홀딩스(0126Z0),
-롯데케미칼(011170), HD한국조선해양(009540), SK가스(018670), 한국가스공사(036460),
-현대제철(004020), OCI(456040)
-> 삼성에피스홀딩스는 일반 6자리가 아닌 **특수 티커 0126Z0** (확인 완료)
-
-### 3군 · 아직 시장이 발견하지 못한 기업 (20)
-한온시스템(018880), HMM(011200), LX하우시스(108670), LX세미콘(108320), LX홀딩스(383800),
-벽산(007210), 동방(004140), 아이에스동서(010780), LX인터내셔널(001120), SK오션플랜트(100090),
-유니드(014830), 태웅(044490), 태광(023160), 성광벤드(014620), 하이록코리아(013030),
-HDC(012630), 케이에스피(073010), 파미셀(005690), 보령(003850), 동화기업(025900)
-> 케이에스피는 073010 (한때 024830으로 잘못 넣었다가 교차검증으로 잡아 수정)
-
----
-
-## 5. 종목 변경하는 법 (가장 자주 할 작업)
-
-1. GitHub → `portfolio_full_briefing.py` 열기 → 연필(✏️) 아이콘으로 편집
-2. `GROUPS` 안에서 해당 그룹 리스트에 줄 추가/삭제
-   - 추가 예: `("삼성전자", "005930", "KOSPI"),`
-   - 코드를 모르면 이름만 정확히 넣고, 실행 후 ⚠ 표시 뜨면 Claude에게 물어보기
-3. **Commit changes** → 다음 자동 실행 또는 **웹페이지 버튼(수동 실행)**에 반영
-4. Claude에게 부탁할 때: "보유 그룹에서 OO 빼고 XX 추가해줘" 라고 하면 코드까지 찾아서 수정 가능
-
----
-
-## 6. 작업 히스토리 (왜 지금 구조가 됐는지)
-
-1. 처음엔 Cowork 스케줄 태스크로 WebSearch 기반 브리핑 + 텔레그램 전송 시도
-   → 샌드박스 외부망 차단으로 텔레그램·정확한 시세 모두 실패
-2. 정확한 종가 위해 **pykrx** 로컬 스크립트 작성 → Cowork 샌드박스에선 네트워크 차단으로 불가, 로컬 전용으로
-3. 시세+뉴스 합친 풀 브리핑 → 1·2·3군 **그룹별 리포트**로 확장 (사진 워치리스트 반영)
-4. 사용자 PC에서 pykrx 실행 시 **KRX 로그인/JSON 에러로 깨짐** → 데이터 소스를 **네이버 금융 API로 전면 교체** (pykrx 제거)
-5. "컴퓨터 꺼져 있어도" 요구 → 로컬 작업 스케줄러는 종료 상태 불가 → **GitHub Actions(클라우드)로 전환**
-6. GitHub Pages 발행 성공, Cowork 중복 태스크 2개 비활성화 → 완성 상태
-7. **(2026-06-17)** 자동 실행 시각을 기다리지 않고 즉시 갱신하고 싶다는 요구 → 목차 페이지에 **수동 실행 버튼** 추가. 토큰은 공개 소스에 넣지 않고 브라우저 localStorage에만 저장하는 방식 채택. fine-grained PAT(Actions 쓰기 권한)로 인증.
-
-### 핵심 교훈/제약
-- Cowork(Claude)의 bash 샌드박스는 **외부 인터넷이 차단**됨 → pykrx·네이버·텔레그램 직접 호출 불가. 실제 데이터가 필요한 작업은 GitHub Actions나 사용자 PC에서 실행해야 함.
-- Cowork의 Write 도구는 한글 대용량(~13KB+) 파일에서 잘릴 수 있음 → 큰 스크립트는 신중히 검증.
-- **GitHub PAT는 비밀번호와 동일.** 스크린샷·채팅·소스 어디에도 노출 금지. 노출 시 즉시 Delete 후 재발급.
-
----
-
-## 7. 앞으로 할 수 있는 작업 (요청하면 진행 가능)
-
-- **종목 추가/삭제/그룹 변경** (코드 자동 매칭 포함)
-- **텔레그램 푸시 켜기**: 저장소 Secrets에 토큰/챗ID 등록 안내
-- **결과 파일 이력 보관**: 매일 날짜별 HTML/CSV를 저장소에 자동 커밋하도록 워크플로 변경
-- **리포트 디자인/항목 추가**: 목표주가·증권사 의견·차트·등락 정렬 등
-- **뉴스 출처/검색어 조정**, 종목당 뉴스 개수 변경(`NEWS_PER_STOCK`)
-- **실행 시각 변경**, 주말/공휴일 처리 추가
-- **알림 채널 추가**: 카카오톡(Cowork에서) 등
-- **수동 버튼 고도화**: 실행 후 진행상태 자동 표시, 서버리스 프록시로 토큰 숨기기
-
-### Claude에게 이어서 시킬 때 한 줄 예시
-> "인수인계 문서 기준으로, GitHub 저장소 portfolio_full_briefing.py에서 보유 그룹에 삼성전자 추가하고 케이에스피 빼줘. 수정본 코드 줘."
-
----
-
-## 8. 빠른 참조 (북마크용)
+## 1. 현재 운영 시스템 = GitHub (살아있는 시스템)
 
 | 항목 | 값 |
 |---|---|
 | 결과 웹페이지 | https://lee-kangil.github.io/portfolio-briefing/ |
-| GitHub 저장소 | github.com/Lee-kangil/portfolio-briefing |
+| GitHub 저장소 | github.com/Lee-kangil/portfolio-briefing (Public) |
 | 기본 브랜치 | main |
 | 메인 스크립트 | portfolio_full_briefing.py |
 | 워크플로 | .github/workflows/briefing.yml |
-| 실행 시각 | 매일 07:00 KST (cron `0 22 * * *`) + 웹 버튼 수동 실행 |
-| 수동 실행 API | POST /repos/Lee-kangil/portfolio-briefing/actions/workflows/briefing.yml/dispatches |
-| 토큰 발급 | https://github.com/settings/tokens?type=beta (Actions: Read and write) |
-| 토큰 저장 위치 | 사용자 브라우저 localStorage (`gh_pat_portfolio`) |
-| 시세 소스 | 네이버 금융 (m.stock.naver.com) |
-| 뉴스 소스 | Google News RSS |
-| Cowork 스케줄 태스크 | 2개 모두 비활성화(OFF) |
+| 자동 실행 | 매일 07:00 KST (cron `0 22 * * *`) + 웹 버튼 수동 실행 |
+| 시세 소스 | 국내 = 네이버 금융 / **미국 = 야후 파이낸스(신규)** |
+| 뉴스 소스 | Google News RSS (국내 한국어 / 미국 영어) |
+
+> **Cowork 스케줄 태스크 2개는 모두 비활성화(OFF)** — GitHub와 중복이라 사용하지 않음.
+> `portfolio-morning-briefing`(구 아침 7시), `portfolio-change-inquiry`(구 밤 10시 카톡 문의) 모두 OFF.
+
+---
+
+## 2. 보유 종목 / 워치리스트 (2026-06-27 기준)
+
+### 보유 포트폴리오 (3) — **2026-06-27 전면 교체**
+
+| 종목명 | 코드/티커 | 시장 |
+|---|---|---|
+| 삼성전자 | 005930 | KOSPI |
+| SK하이닉스 | 000660 | KOSPI |
+| DRAM (Roundhill Memory ETF) | DRAM | NASDAQ (미국) |
+
+> 메모리 반도체 중심으로 재편. 기존 8종목(LX인터내셔널·파미셀·아이에스동서·성광벤드·유니드·롯데에너지머티리얼즈·LX세미콘·LX홀딩스)은 보유 그룹에서 제외(워치리스트 3군에는 일부 잔존). DRAM은 미국 NASDAQ 상장 Roundhill Memory ETF(2026-03 출시).
+
+### 워치리스트 (변경 없음)
+
+- **1군 · 글로벌 브랜드 (12)**: 삼성물산, LG, LG전자우, LG디스플레이, LG화학우, HD현대중공업, 두산우, 두산에너빌리티, OCI홀딩스, 한화솔루션, SKC, 롯데에너지머티리얼즈
+- **2군 · 대기업 집단 계열사 (16)**: 한국전력, 한전기술, 대한항공, 한화3우B(00088K), SK이노베이션, KCC, DL, DL이앤씨, GS건설, 삼성에피스홀딩스(0126Z0), 롯데케미칼, HD한국조선해양, SK가스, 한국가스공사, 현대제철, OCI
+- **3군 · 아직 시장이 발견하지 못한 기업 (20)**: 한온시스템, HMM, LX하우시스, LX세미콘, LX홀딩스, 벽산, 동방, 아이에스동서, LX인터내셔널, SK오션플랜트, 유니드, 태웅, 태광, 성광벤드, 하이록코리아, HDC, 케이에스피(073010), 파미셀, 보령, 동화기업
+
+---
+
+## 3. 2026-06-27 작업 내용 (이번 세션)
+
+1. **보유 그룹 3종목 교체** — `GROUPS["보유 포트폴리오"]`를 삼성전자·SK하이닉스·DRAM으로 변경.
+2. **미국 시세 소스 추가** — DRAM이 미국 ETF라 네이버로는 조회 불가 → 야후 파이낸스 연동 신설.
+   - `_from_yahoo(ticker)`: 야후 v8 chart API(`query1`→`query2` 폴백)로 현재가·전일대비·등락률 조회.
+   - `fetch_price(code, market)`: 시장이 `US/NASDAQ/NYSE/AMEX`면 야후, `KOSPI/KOSDAQ`면 네이버로 자동 분기.
+   - **통화 구분 표시**: 미국 `$32.46`(소수 2자리) / 국내 `71,200원`. 표·카드·CSV·콘솔 모두 적용.
+   - 미국 종목 뉴스는 영어 Google News(`{종목명} ETF stock`)로 조회. 미국 종목은 네이버 종목명 교차검증(⚠) 생략.
+3. **검증**: `py_compile` 문법 통과 + 통화 포맷 단위 검증 통과.
+   - ⚠ **미검증 항목**: 야후 실시간 호출은 Cowork 샌드박스 외부망 차단으로 실제 테스트 못 함(로직 기반 구현). GitHub Actions에서 첫 실행 시 DRAM 시세 확인 필요. `시세 실패`로 뜨면 야후가 crumb/쿠키를 요구하는 경우이므로 대체 소스로 전환.
+4. **반영 상태**: 수정본 파일은 작성 완료. **아직 GitHub 저장소에 커밋 전** → 아래 4번 절차로 반영 필요.
+
+---
+
+## 4. 종목 변경하는 법 (가장 자주 할 작업)
+
+1. GitHub → `portfolio_full_briefing.py` → 연필(✏️) 편집, 또는 수정본 파일 Upload로 덮어쓰기
+2. `GROUPS` 안 해당 그룹 리스트에 줄 추가/삭제
+   - 국내 추가 예: `("삼성전자", "005930", "KOSPI"),`
+   - 미국 추가 예: `("DRAM (Roundhill Memory ETF)", "DRAM", "NASDAQ"),`
+   - 코드/티커 모르면 이름만 정확히 넣고 실행 후 ⚠ 표시 뜨면 Claude에게 문의
+3. **Commit changes** → 다음 자동 실행 또는 **웹페이지 ▶수동 실행 버튼**에 반영
+4. Claude 요청 예: "보유 그룹에서 OO 빼고 XX 추가해줘 — 수정본 코드 줘"
+
+---
+
+## 5. 수동 실행 버튼 (웹페이지)
+
+- 목차 페이지 상단 `▶ 지금 브리핑 새로 실행` + `⚙ 토큰` UI. 버튼이 GitHub API `workflow_dispatch`를 호출해 즉시 실행.
+- 호출: `POST https://api.github.com/repos/Lee-kangil/portfolio-briefing/actions/workflows/briefing.yml/dispatches` (body `{"ref":"main"}`), 성공 시 HTTP 204.
+- **토큰(PAT)**: 공개 소스에 넣지 않고 사용자 브라우저 `localStorage`(`gh_pat_portfolio`)에만 저장. ⚙토큰에 1회 붙여넣기.
+- 토큰 발급: https://github.com/settings/tokens?type=beta (Fine-grained, 대상 `portfolio-briefing`, **Actions: Read and write**, 403이면 Contents: Read and write 추가).
+- ⚠ **GitHub PAT = 비밀번호.** 스크린샷·채팅·소스 어디에도 노출 금지. 노출 시 즉시 Delete 후 재발급.
+
+---
+
+## 6. 스크립트 구조 (portfolio_full_briefing.py)
+
+- 의존성: `requests` 만.
+- `GROUPS`: 그룹명 → `[(이름, 코드/티커, 시장), ...]`. **종목 변경은 이 부분만 수정.**
+- `fetch_price(code, market)`: 미국=야후, 국내=네이버(모바일 API 우선, polling 폴백).
+- `fetch_news(name, market)`: Google News RSS(국내 한국어 / 미국 영어).
+- 출력: 그룹별 `portfolio_<그룹>_YYYYMMDD.html`/`.csv`. `BRIEFING_OUT=docs`(클라우드)면 `g1~g4.html` + 목차 `index.html` 생성, 로컬이면 `~/Downloads`.
+- 로컬 실행(Windows): `pip install requests` → `python portfolio_full_briefing.py`
+- 실행 시각 변경: `briefing.yml` cron 한 줄 (UTC 기준, KST=UTC+9). 예: 오전 8시 KST → `0 23 * * *`.
+- (옵션) 저장소 Secrets에 `TELEGRAM_TOKEN`/`TELEGRAM_CHAT_ID` 넣으면 텔레그램 전송 활성화 — **현재 미설정.**
+
+<!--
+[보관] 텔레그램 봇 정보 — 현재 미사용 (향후 파일 전송 필요 시 재활성화)
+- Bot 이름: @Telelee
+- Bot Token: 8916273993:AAGKSmaJKVf7SNBaNGG1zuNhpXaHwEpPzpU
+- Chat ID: 8975893894
+- API: sendDocument 로 HTML 파일 전송
+-->
+
+---
+
+## 7. 작업 히스토리 (왜 지금 구조가 됐는지)
+
+1. 처음엔 Cowork 스케줄 + WebSearch 브리핑 + 텔레그램 전송 시도 → 샌드박스 외부망 차단으로 텔레그램·정확 시세 실패.
+2. pykrx 로컬 스크립트 → KRX 로그인/JSON 에러 → **네이버 금융 API로 전면 교체**(pykrx 제거).
+3. 시세+뉴스 합쳐 1·2·3군 **그룹별 리포트**로 확장.
+4. "PC 꺼져 있어도" 요구 → 로컬 스케줄러 한계 → **GitHub Actions(클라우드) + GitHub Pages**로 전환, Cowork 태스크 2개 비활성화.
+5. **(2026-06-17)** 목차에 **수동 실행 버튼** 추가(토큰은 브라우저 localStorage 보관).
+6. **(2026-06-27)** 보유 그룹을 **삼성전자·SK하이닉스·DRAM 3종목**으로 교체 + **미국 시세(야후 파이낸스) 소스 추가**.
+
+### 핵심 제약
+- Cowork bash 샌드박스는 **외부 인터넷 차단** → 실데이터 작업은 GitHub Actions나 사용자 PC에서 실행.
+- GitHub PAT는 비밀번호 동일 — 노출 금지.
+
+---
+
+## 8. 앞으로 할 수 있는 작업
+
+- 종목 추가/삭제/그룹 변경 (코드 자동 매칭)
+- DRAM 시세 동작 확인 후 미국 종목 추가 확장
+- 텔레그램 푸시 켜기(저장소 Secrets 등록)
+- 결과 파일 날짜별 이력 보관(워크플로 변경)
+- 리포트 항목 추가(목표주가·증권사 의견·차트·정렬 등)
+- 실행 시각 변경, 주말/공휴일 처리
+- 수동 버튼 고도화(진행상태 표시, 서버리스 프록시로 토큰 숨기기)
